@@ -6,7 +6,6 @@ dependencies:
   - pip
   - tqdm
   - pip:
-    - requests
     - beautifulsoup4
     - playwright
 # After install run: playwright install chromium
