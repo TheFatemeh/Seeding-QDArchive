@@ -1,6 +1,0 @@
-# UK Data Service search queries
-# One query per line. Lines starting with # are ignored.
-
-qualitative
-interview
-transcript

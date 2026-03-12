@@ -1,60 +1,66 @@
 # QDArchive – Part 1: Data Acquisition
 
-**Student Name:** Seyedeh Fatemeh Ahmadi
-
-## Overview
-
-Python crawler that discovers qualitative research datasets from online repositories,
-extracts metadata, and downloads openly available data files into a local archive.
+Python crawler for qualitative research datasets.
 
 Currently supported repositories:
-- **UK Data Service** (`datacatalogue.ukdataservice.ac.uk`)
+- UK Data Service (`datacatalogue.ukdataservice.ac.uk`)
 
 ## Project Structure
 
 ```
-├── main.py                  # CLI entry point (new / resume modes)
+├── main.py
 ├── crawler/
-│   ├── ukdataservice_crawler.py   # UK Data Service crawler
-│   └── search_queries.txt         # search terms (one per line)
+│   ├── __init__.py
+│   └── ukdataservice/
+│       ├── __init__.py
+│       ├── crawler.py          # crawler logic for UK Data Service
+│       └── oai_index.py        # OAI-PMH XML parsing + qualitative filter
 ├── database/
-│   └── db.py                      # SQLite wrapper
+│   └── db.py
 ├── archive_root/
-│   ├── downloads/                 # downloaded dataset files
-│   ├── metadata/                  # crawl.sqlite database
-│   └── logs/                      # crawler.log
-├── environment.yml                # conda environment spec
+│   ├── downloads/
+│   ├── metadata/
+│   │   └── ukdataservice/
+│   │       ├── oai_batches/          # auto-downloaded OAI batch_*.xml files
+│   │       └── oai_metadata_index.json
+│   └── logs/
+├── extensions.csv
+├── environment.yml
+└── README.md
 ```
 
 ## Setup
 
 ```bash
-# 1. Create and activate the conda environment
 conda env create -f environment.yml
 conda activate qda-crawler
-
-# 2. Install the Playwright browser
 playwright install chromium
 ```
 
 ## Usage
 
 ```bash
-# Fresh crawl — clears previous data and runs from scratch
+# Fresh crawl (deletes old UKDS downloads + DB rows)
 python main.py new ukdataservice
 
-# Resume — retries incomplete downloads only
+# Resume incomplete downloads
 python main.py resume ukdataservice
 ```
 
-### Search Queries
+## UK Data Service Pipeline
 
-Edit `crawler/search_queries.txt` to add or change search terms (one per line, `#` for comments).
+1. Read OAI-PMH batch XML files from `archive_root/metadata/ukdataservice/oai_batches/`.
+2. If they are missing, download all batches automatically from the OAI-PMH endpoint.
+3. Build an in-memory metadata index.
+4. Apply qualitative filter rule on `dc:type`:
+	- exclude only when type is exactly `Numeric` and nothing else
+	- include mixed types (e.g., `Numeric` + `Text`)
+	- include when no type is present
+5. For each included dataset ID, visit the dataset page directly.
+6. Check access level and download files for open datasets.
+7. Store metadata in `archive_root/metadata/crawl.sqlite`.
 
-## How It Works
+## Notes
 
-1. For each query in `search_queries.txt`, the crawler searches the UK Data Service catalogue and paginates through all result pages.
-2. All discovered study URLs are deduplicated into a single set.
-3. For each study URL, the crawler visits the page, extracts metadata (title, DOI, authors, access level, abstract, keywords, license), and saves the page HTML.
-4. If the dataset has **open** access, it clicks the download buttons (EXCEL, SPSS, STATA, TAB, etc.) and saves the files locally.
-5. All metadata is stored in a SQLite database at `archive_root/metadata/crawl.sqlite`.
+- The crawler does not use query-based website search anymore.
+- OAI batches and `oai_metadata_index.json` are generated locally during crawling if missing.

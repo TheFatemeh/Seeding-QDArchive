@@ -1,1 +1,1 @@
-from .ukdataservice_crawler import UKDataServiceCrawler
+from .ukdataservice import UKDataServiceCrawler
