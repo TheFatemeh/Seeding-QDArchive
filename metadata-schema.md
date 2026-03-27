@@ -1,7 +1,7 @@
 # Assignment 1: Proposed Metadata Schema
 
 **Students**:
-Seyedeh Fatemeh Ahmadi, Diyar Tulenov
+Seyedeh Fatemeh Ahmadi
 
 
 ## Metadata Schema

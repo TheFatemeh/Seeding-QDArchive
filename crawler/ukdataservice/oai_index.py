@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 import json
 import logging
+import time
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
@@ -23,6 +24,16 @@ OAI_ENDPOINT = "https://oai.ukdataservice.ac.uk/oai/provider"
 DEFAULT_BATCH_DIR = Path("archive_root/metadata/ukdataservice/oai_batches")
 DEFAULT_INDEX_FILE = Path("archive_root/metadata/ukdataservice/oai_metadata_index.json")
 LEGACY_BATCH_DIR = Path("ukds_metadata")
+
+
+def _sorted_batches(batch_dir: Path) -> list[Path]:
+    """Return batch XML files sorted numerically (batch_0, batch_1, ..., batch_9, batch_10, ...)."""
+    def _batch_num(p: Path) -> int:
+        try:
+            return int(p.stem.split("_")[-1])
+        except ValueError:
+            return -1
+    return sorted(batch_dir.glob("batch_*.xml"), key=_batch_num)
 
 
 def _resolve_batch_dir(batch_dir: Path | None) -> Path:
@@ -48,39 +59,92 @@ def _extract_resumption_token(xml_content: bytes) -> str | None:
     return token or None
 
 
-def harvest_oai_batches(batch_dir: Path = None, overwrite: bool = False) -> int:
+def _batch_files_complete(batch_files: list[Path]) -> bool:
+    """Return True when the last batch has no resumption token."""
+    if not batch_files:
+        return False
+
+    try:
+        last_xml = batch_files[-1].read_bytes()
+        return _extract_resumption_token(last_xml) is None
+    except Exception:
+        return False
+
+
+def harvest_oai_batches(batch_dir: Path = None, overwrite: bool = False, max_retries: int = 5) -> int:
     """Download OAI-PMH ListRecords batches to local XML files.
 
-    Returns number of batch files written.
+    Resumes automatically from the last successfully downloaded batch if the
+    harvest was previously interrupted.  Set overwrite=True to delete all
+    existing batches and start completely fresh.
+
+    Returns total number of batch files present after the call.
     """
     batch_dir = _resolve_batch_dir(batch_dir)
     batch_dir.mkdir(parents=True, exist_ok=True)
 
-    existing = sorted(batch_dir.glob("batch_*.xml"))
-    if existing and not overwrite:
-        return len(existing)
+    existing = _sorted_batches(batch_dir)
 
-    if overwrite:
+    if overwrite and existing:
         for file_path in existing:
             file_path.unlink()
+        existing = []
 
-    params = {
-        "verb": "ListRecords",
-        "metadataPrefix": "oai_dc",
-    }
+    # Re-check after possible deletion.
+    existing = _sorted_batches(batch_dir)
 
-    written_count = 0
-    batch_number = 0
+    # Already a complete harvest — nothing to do.
+    if existing and _batch_files_complete(existing):
+        return len(existing)
+
+    # Determine where to start.
+    if existing:
+        # Resume: use the resumption token from the last downloaded batch.
+        try:
+            last_token = _extract_resumption_token(existing[-1].read_bytes())
+        except Exception:
+            last_token = None
+
+        if last_token:
+            batch_number = len(existing)
+            params = {"verb": "ListRecords", "resumptionToken": last_token}
+            written_count = len(existing)
+            logger.info(
+                f"Resuming OAI harvest from batch {batch_number} "
+                f"({len(existing)} batches already on disk)..."
+            )
+        else:
+            # Last file has no token → already complete (edge case).
+            return len(existing)
+    else:
+        # Fresh start.
+        batch_number = 0
+        params = {"verb": "ListRecords", "metadataPrefix": "oai_dc"}
+        written_count = 0
 
     while True:
         query = urlencode(params)
         url = f"{OAI_ENDPOINT}?{query}"
 
-        try:
-            with urlopen(url, timeout=60) as response:
-                xml_content = response.read()
-        except Exception as error:
-            logger.error(f"Failed to fetch OAI batch {batch_number}: {error}")
+        xml_content = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                with urlopen(url, timeout=120) as response:
+                    xml_content = response.read()
+                break
+            except Exception as error:
+                if attempt == max_retries:
+                    logger.error(
+                        f"Failed to fetch OAI batch {batch_number} after {max_retries} attempts: {error}"
+                    )
+                else:
+                    wait_seconds = min(2 ** attempt, 30)
+                    logger.warning(
+                        f"Retry {attempt}/{max_retries} for OAI batch {batch_number} after error: {error}"
+                    )
+                    time.sleep(wait_seconds)
+
+        if xml_content is None:
             break
 
         output_file = batch_dir / f"batch_{batch_number}.xml"
@@ -96,10 +160,7 @@ def harvest_oai_batches(batch_dir: Path = None, overwrite: bool = False) -> int:
         if not token:
             break
 
-        params = {
-            "verb": "ListRecords",
-            "resumptionToken": token,
-        }
+        params = {"verb": "ListRecords", "resumptionToken": token}
         batch_number += 1
 
     return written_count
@@ -115,15 +176,37 @@ def load_oai_metadata_index(batch_dir: Path = None) -> dict:
     batch_dir = _resolve_batch_dir(batch_dir)
 
     index = {}
-    batch_files = sorted(batch_dir.glob("batch_*.xml"))
+    batch_files = _sorted_batches(batch_dir)
 
-    if not batch_files:
-        logger.info(f"No OAI batch files found at {batch_dir}. Downloading from OAI-PMH...")
+    # Keep resuming until the harvest is complete or we exhaust attempts.
+    MAX_HARVEST_ROUNDS = 10
+    for round_num in range(1, MAX_HARVEST_ROUNDS + 1):
+        if batch_files and _batch_files_complete(batch_files):
+            break  # done
+
+        if not batch_files:
+            logger.info(f"No OAI batch files found at {batch_dir}. Downloading from OAI-PMH... (round {round_num})")
+        else:
+            logger.warning(
+                f"Incomplete OAI batch set ({len(batch_files)} batches). "
+                f"Resuming download... (round {round_num}/{MAX_HARVEST_ROUNDS})"
+            )
+
         harvest_oai_batches(batch_dir=batch_dir)
-        batch_files = sorted(batch_dir.glob("batch_*.xml"))
+        batch_files = _sorted_batches(batch_dir)
+    else:
+        # Loop exhausted without breaking
+        logger.error(
+            f"OAI batch set still incomplete after {MAX_HARVEST_ROUNDS} rounds; refusing to crawl with partial metadata"
+        )
+        return {}
 
     if not batch_files:
         logger.warning(f"Could not load or download OAI batches in {batch_dir}")
+        return {}
+
+    if not _batch_files_complete(batch_files):
+        logger.error(f"OAI batch set is incomplete in {batch_dir}; refusing to crawl with partial metadata")
         return {}
 
     logger.info(f"Loading OAI metadata from {len(batch_files)} batch files...")
