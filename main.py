@@ -27,12 +27,12 @@ CRAWLERS = {
     "ukdataservice": {
         "class": UKDataServiceCrawler,
         "download_dir": "archive_root/downloads/ukdataservice",
-        "repository_name": "UK Data Service",
+        "repository_id": 3,
     },
     # "databrary": {
     #     "class": DataBraryCrawler,
     #     "download_dir": "archive_root/downloads/databrary",
-    #     "repository_name": "Databrary",
+    #     "repository_id": ...,
     # },
 }
 
@@ -49,8 +49,8 @@ def run_new(crawler_name: str, db: Database):
     download_dir.mkdir(parents=True, exist_ok=True)
 
     # Clean up database entries
-    db.delete_by_repository(config["repository_name"])
-    print(f"  Deleted DB records for: {config['repository_name']}")
+    db.delete_by_repository(config["repository_id"])
+    print(f"  Deleted DB records for repository_id: {config['repository_id']}")
 
     # Run crawler
     crawler = config["class"](db, download_dir=str(download_dir))

@@ -226,12 +226,17 @@ def load_oai_metadata_index(batch_dir: Path = None) -> dict:
                     continue
                 dataset_id = id_elem.text.strip()
 
+                datestamp_elem = header.find("oai:datestamp", NAMESPACES)
+                datestamp = datestamp_elem.text.strip() if datestamp_elem is not None and datestamp_elem.text else None
+
                 dc = record.find(".//oai_dc:dc", NAMESPACES)
                 if dc is None:
                     continue
 
                 metadata = _extract_dublin_core(dc)
                 metadata["dataset_id"] = dataset_id
+                if datestamp:
+                    metadata["datestamp"] = datestamp
 
                 if not _should_include_by_type(metadata.get("types", [])):
                     continue

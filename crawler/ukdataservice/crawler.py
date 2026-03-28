@@ -17,6 +17,7 @@ from pathlib import Path
 import json
 import time
 import logging
+from datetime import datetime
 from tqdm import tqdm
 
 from .oai_index import load_oai_metadata_index, save_index_to_json, load_index_from_json
@@ -32,6 +33,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 EXTENSIONS_FILE = Path(__file__).parent.parent.parent / "extensions.csv"
+
+REPOSITORY_ID = 3
+REPOSITORY_URL = "https://datacatalogue.ukdataservice.ac.uk"
+DOWNLOAD_REPOSITORY_FOLDER = "ukdataservice"
+DOWNLOAD_METHOD = "SCRAPING"
 
 
 def load_qda_extensions() -> set:
@@ -78,11 +84,12 @@ class UKDataServiceCrawler:
             self.browser = None
             logger.info("Browser stopped")
 
-    def _check_access_level(self, soup: BeautifulSoup, metadata: dict) -> bool:
+    def _check_access_level(self, soup: BeautifulSoup) -> tuple[bool, str | None]:
+        """Check access level. Returns (is_open, license_string)."""
+        license_str = None
         access_span = soup.find("span", string=lambda value: value and value.strip() == "Access")
         if not access_span:
-            metadata["download_status"] = "unknown"
-            return False
+            return False, None
 
         parent = access_span.find_parent("div")
         if parent:
@@ -93,31 +100,33 @@ class UKDataServiceCrawler:
                     access_text = access_p.get_text(" ", strip=True).lower()
 
                     if "open" in access_text:
-                        metadata["download_status"] = "open"
-
                         access_section = soup.find("div", {"data-testid": "access-section"})
                         if access_section:
                             license_links = access_section.find_all("a")
                             for link in license_links:
                                 link_text = link.get_text(strip=True)
-                                if any(token in link_text for token in ["Licence", "License", "Creative Commons"]):
-                                    metadata["license"] = link_text
+                                if link_text:
+                                    license_str = link_text
                                     break
-
-                        return True
+                        return True, license_str
 
                     if "safeguarded" in access_text:
-                        metadata["download_status"] = "restricted_safeguarded"
-                        metadata["license"] = "Safeguarded"
+                        return False, "Safeguarded"
                     elif "controlled" in access_text:
-                        metadata["download_status"] = "restricted_controlled"
-                        metadata["license"] = "Controlled"
+                        return False, "Controlled"
 
-        metadata["download_status"] = "unknown"
-        return False
+        return False, None
 
-    def _download_via_buttons(self, dataset_dir: Path) -> list:
-        filenames = []
+    def _extract_doi(self, soup: BeautifulSoup) -> str | None:
+        """Extract DOI URL from the page."""
+        doi_link = soup.find("a", href=lambda h: h and "doi.org/" in h)
+        if doi_link:
+            return doi_link["href"]
+        return None
+
+    def _download_via_buttons(self, dataset_dir: Path) -> list[tuple[str, str]]:
+        """Download files via buttons. Returns list of (filename, status) tuples."""
+        results = []
         self.page.context.set_default_timeout(60000)
 
         buttons = self.page.locator("div[data-testid='access-section'] button").all()
@@ -132,14 +141,15 @@ class UKDataServiceCrawler:
                 filepath = dataset_dir / filename
                 download.save_as(filepath)
 
-                filenames.append(filename)
+                results.append((filename, "SUCCEEDED"))
                 logger.info(f"Downloaded: {filename}")
                 time.sleep(1)
 
             except Exception as error:
                 logger.warning(f"Failed to download from button: {error}")
+                results.append(("unknown", "FAILED_SERVER_UNRESPONSIVE"))
 
-        return filenames
+        return results
 
     def crawl(self, limit: int = None):
         index_file = Path("archive_root/metadata/ukdataservice/oai_metadata_index.json")
@@ -166,77 +176,78 @@ class UKDataServiceCrawler:
         processed = 0
         for dataset_id in tqdm(all_ids, desc="Processing datasets", unit="dataset"):
             oai_metadata = metadata_index[dataset_id]
-            dataset_url = f"{self.BASE_URL}/studies/study/{dataset_id}"
+            project_url = f"{self.BASE_URL}/studies/study/{dataset_id}"
 
-            if self.db.dataset_exists(dataset_url):
+            if self.db.project_exists(project_url):
                 continue
 
-            metadata = {
-                "dataset_page_url": dataset_url,
-                "repository_name": "UK Data Service",
-                "dataset_title": oai_metadata.get("title", ""),
-                "dataset_description": oai_metadata.get("description", ""),
-            }
-
-            if oai_metadata.get("creators"):
-                metadata["author_name"] = json.dumps(oai_metadata["creators"])
-
-            if oai_metadata.get("subjects"):
-                metadata["keywords"] = json.dumps(oai_metadata["subjects"])
-
             try:
-                self.page.goto(dataset_url, wait_until="networkidle", timeout=30000)
+                self.page.goto(project_url, wait_until="networkidle", timeout=30000)
                 time.sleep(1)
 
                 html = self.page.content()
                 soup = BeautifulSoup(html, "html.parser")
 
-                is_open = self._check_access_level(soup, metadata)
+                is_open, license_str = self._check_access_level(soup)
+                doi = self._extract_doi(soup)
 
-                dataset_dir = self.download_dir / f"ukds_{dataset_id}"
+                dataset_dir = self.download_dir / dataset_id
                 dataset_dir.mkdir(exist_ok=True)
-                metadata["local_directory"] = str(dataset_dir)
+
+                download_date = datetime.now().isoformat()
+
+                project_data = {
+                    "repository_id": REPOSITORY_ID,
+                    "repository_url": REPOSITORY_URL,
+                    "project_url": project_url,
+                    "title": oai_metadata.get("title", ""),
+                    "description": oai_metadata.get("description", ""),
+                    "language": oai_metadata.get("language"),
+                    "doi": doi,
+                    "upload_date": oai_metadata.get("datestamp"),
+                    "download_date": download_date,
+                    "download_repository_folder": DOWNLOAD_REPOSITORY_FOLDER,
+                    "download_project_folder": dataset_id,
+                    "download_method": DOWNLOAD_METHOD,
+                }
+
+                project_id = self.db.insert_project(**project_data)
+
+                # Insert keywords from OAI subjects
+                for subject in oai_metadata.get("subjects", []):
+                    self.db.insert_keyword(project_id, subject)
+
+                # Insert creators as AUTHOR
+                for creator in oai_metadata.get("creators", []):
+                    self.db.insert_person_role(project_id, creator, "AUTHOR")
+
+                # Insert license
+                if license_str:
+                    self.db.insert_license(project_id, license_str)
 
                 if is_open:
-                    downloaded_files = self._download_via_buttons(dataset_dir)
-                    metadata["file_count"] = len(downloaded_files)
+                    file_results = self._download_via_buttons(dataset_dir)
 
-                    if downloaded_files:
-                        metadata["download_status"] = "successful"
-                        file_types = list({Path(name).suffix.lower() for name in downloaded_files if Path(name).suffix})
-                        metadata["file_types"] = json.dumps(sorted(file_types))
+                    for filename, status in file_results:
+                        file_type = Path(filename).suffix.lstrip(".").lower() if Path(filename).suffix else ""
+                        self.db.insert_file(project_id, filename, file_type, status)
 
-                        for filename in downloaded_files:
+                    succeeded = [f for f, s in file_results if s == "SUCCEEDED"]
+                    if succeeded:
+                        tqdm.write(f"  ✓ {len(succeeded)} files: {oai_metadata.get('title', dataset_id)[:60]}")
+                        for filename in succeeded:
                             ext = Path(filename).suffix.lower()
                             if ext in self.qda_extensions:
-                                metadata["qda_file_url"] = dataset_url
-                                metadata["qda_local_filename"] = filename
+                                tqdm.write(f"  ★ QDA: {filename}")
                                 break
-                    else:
-                        metadata["download_status"] = "no_files"
                 else:
-                    metadata["file_count"] = 0
+                    # Restricted access - record as FAILED_LOGIN_REQUIRED
+                    self.db.insert_file(project_id, "", "", "FAILED_LOGIN_REQUIRED")
 
-                (dataset_dir / "metadata.json").write_text(
-                    json.dumps(metadata, indent=2, ensure_ascii=False),
-                    encoding="utf-8"
-                )
-
-                self.db.insert_dataset(**metadata)
                 processed += 1
-
-                if metadata.get("download_status") == "successful":
-                    tqdm.write(f"  ✓ {metadata.get('file_count', 0)} files: {metadata.get('dataset_title', dataset_id)[:60]}")
-                if metadata.get("qda_local_filename"):
-                    tqdm.write(f"  ★ QDA: {metadata['qda_local_filename']}")
 
             except Exception as error:
                 logger.error(f"Failed to process dataset {dataset_id}: {error}")
-                metadata["download_status"] = "failed"
-                try:
-                    self.db.insert_dataset(**metadata)
-                except Exception:
-                    pass
 
             time.sleep(0.5)
 
@@ -244,55 +255,48 @@ class UKDataServiceCrawler:
         logger.info(f"Crawl complete: {processed} datasets processed")
 
     def resume(self, delay: float = 0.5):
-        incomplete = self.db.get_incomplete_downloads("UK Data Service")
+        incomplete = self.db.get_incomplete_downloads(REPOSITORY_ID)
+        no_files = self.db.get_projects_without_files(REPOSITORY_ID)
+        to_retry = incomplete + no_files
 
-        if not incomplete:
+        if not to_retry:
             logger.info("Nothing to resume")
             return
 
-        logger.info(f"Resuming {len(incomplete)} datasets")
+        logger.info(f"Resuming {len(to_retry)} datasets")
         self._start_browser()
 
-        for index, record in enumerate(incomplete, 1):
-            dataset_url = record["dataset_page_url"]
-            dataset_id = record["id"]
+        for index, record in enumerate(to_retry, 1):
+            project_url = record["project_url"]
+            project_id = record["id"]
+            dataset_id = record["download_project_folder"]
 
-            logger.info(f"[{index}/{len(incomplete)}] Resuming: {dataset_url}")
+            logger.info(f"[{index}/{len(to_retry)}] Resuming: {project_url}")
 
             try:
-                local_dir = record.get("local_directory")
-                if local_dir:
-                    dataset_dir = Path(local_dir)
-                else:
-                    study_id = dataset_url.rstrip("/").split("/")[-1]
-                    dataset_dir = self.download_dir / f"ukds_{study_id}"
+                dataset_dir = self.download_dir / dataset_id
                 dataset_dir.mkdir(parents=True, exist_ok=True)
 
-                self.page.goto(dataset_url, wait_until="networkidle", timeout=30000)
+                self.page.goto(project_url, wait_until="networkidle", timeout=30000)
                 time.sleep(2)
 
-                downloaded_files = self._download_via_buttons(dataset_dir)
+                # Remove old failed file records
+                self.db.delete_files_for_project(project_id)
 
-                if downloaded_files:
-                    file_types = list({Path(name).suffix.lower() for name in downloaded_files if Path(name).suffix})
-                    updates = {
-                        "download_status": "successful",
-                        "file_count": len(downloaded_files),
-                        "file_types": json.dumps(sorted(file_types)),
-                    }
-                    for filename in downloaded_files:
-                        ext = Path(filename).suffix.lower()
-                        if ext in self.qda_extensions:
-                            updates["qda_file_url"] = dataset_url
-                            updates["qda_local_filename"] = filename
-                            break
-                    self.db.update_download(dataset_id, **updates)
-                    logger.info(f"[{index}/{len(incomplete)}] Downloaded {len(downloaded_files)} files")
+                file_results = self._download_via_buttons(dataset_dir)
+
+                for filename, status in file_results:
+                    file_type = Path(filename).suffix.lstrip(".").lower() if Path(filename).suffix else ""
+                    self.db.insert_file(project_id, filename, file_type, status)
+
+                succeeded_count = sum(1 for _, s in file_results if s == "SUCCEEDED")
+                if succeeded_count:
+                    logger.info(f"[{index}/{len(to_retry)}] Downloaded {succeeded_count} files")
                 else:
-                    logger.info(f"[{index}/{len(incomplete)}] No files")
+                    logger.info(f"[{index}/{len(to_retry)}] No files")
 
             except Exception as error:
-                logger.error(f"[{index}/{len(incomplete)}] Failed: {error}")
+                logger.error(f"[{index}/{len(to_retry)}] Failed: {error}")
 
             time.sleep(delay)
 
