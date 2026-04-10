@@ -14,6 +14,7 @@ No web search needed - full metadata already in OAI batches.
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 from pathlib import Path
+from typing import Optional, Tuple, List
 import json
 import time
 import logging
@@ -84,7 +85,7 @@ class UKDataServiceCrawler:
             self.browser = None
             logger.info("Browser stopped")
 
-    def _check_access_level(self, soup: BeautifulSoup) -> tuple[bool, str | None]:
+    def _check_access_level(self, soup: BeautifulSoup) -> Tuple[bool, Optional[str]]:
         """Check access level. Returns (is_open, license_string)."""
         license_str = None
         access_span = soup.find("span", string=lambda value: value and value.strip() == "Access")
@@ -117,14 +118,14 @@ class UKDataServiceCrawler:
 
         return False, None
 
-    def _extract_doi(self, soup: BeautifulSoup) -> str | None:
+    def _extract_doi(self, soup: BeautifulSoup) -> Optional[str]:
         """Extract DOI URL from the page."""
         doi_link = soup.find("a", href=lambda h: h and "doi.org/" in h)
         if doi_link:
             return doi_link["href"]
         return None
 
-    def _download_via_buttons(self, dataset_dir: Path) -> list[tuple[str, str]]:
+    def _download_via_buttons(self, dataset_dir: Path) -> List[Tuple[str, str]]:
         """Download files via buttons. Returns list of (filename, status) tuples."""
         results = []
         self.page.context.set_default_timeout(60000)

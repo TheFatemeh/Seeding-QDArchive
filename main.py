@@ -7,12 +7,12 @@ Usage:
 
 Arguments:
     mode        'new' or 'resume'
-    crawler     One or more crawler names: ukdataservice, databrary
+    crawler     One or more crawler names: ukdataservice, icpsr
 
 Examples:
     python main.py new ukdataservice
     python main.py resume ukdataservice
-    python main.py new ukdataservice databrary
+    python main.py new icpsr
 """
 
 import argparse
@@ -20,7 +20,7 @@ import shutil
 from pathlib import Path
 
 from database import Database
-from crawler import UKDataServiceCrawler
+from crawler import UKDataServiceCrawler, ICPSRCrawler
 
 # Map crawler names to their classes and download directories
 CRAWLERS = {
@@ -29,11 +29,11 @@ CRAWLERS = {
         "download_dir": "archive_root/downloads/ukdataservice",
         "repository_id": 3,
     },
-    # "databrary": {
-    #     "class": DataBraryCrawler,
-    #     "download_dir": "archive_root/downloads/databrary",
-    #     "repository_id": ...,
-    # },
+    "icpsr": {
+        "class": ICPSRCrawler,
+        "download_dir": "archive_root/downloads/icpsr",
+        "repository_id": 15,
+    },
 }
 
 

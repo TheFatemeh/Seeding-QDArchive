@@ -34,4 +34,5 @@ venv/
 oai_metadata_index.json
 oai_batches/
 archive_root/downloads/ukdataservice/
+archive_root/downloads/icpsr/
 archive_root/logs/

@@ -1,9 +1,10 @@
-# QDArchive – Part 1: Data Acquisition
+# QDArchive -- Part 1: Data Acquisition
 
 Python crawler for qualitative research datasets.
 
 Currently supported repositories:
 - UK Data Service (`datacatalogue.ukdataservice.ac.uk`)
+- ICPSR (`www.icpsr.umich.edu`)
 
 ## Project Structure
 
@@ -11,19 +12,31 @@ Currently supported repositories:
 ├── main.py
 ├── crawler/
 │   ├── __init__.py
-│   └── ukdataservice/
+│   ├── ukdataservice/
+│   │   ├── __init__.py
+│   │   ├── crawler.py          # crawler logic for UK Data Service
+│   │   └── oai_index.py        # OAI-PMH XML parsing + qualitative filter
+│   └── icpsr/
 │       ├── __init__.py
-│       ├── crawler.py          # crawler logic for UK Data Service
-│       └── oai_index.py        # OAI-PMH XML parsing + qualitative filter
+│       └── crawler.py          # crawler logic for ICPSR
 ├── database/
-│   └── db.py
+│   └── db.py                   # multi-table SQLite schema (PROJECTS, FILES, KEYWORDS, PERSON_ROLE, LICENSES)
 ├── archive_root/
 │   ├── downloads/
+│   │   ├── ukdataservice/
+│   │   └── icpsr/
 │   ├── metadata/
-│   │   └── ukdataservice/
-│   │       ├── oai_batches/          # auto-downloaded OAI batch_*.xml files
-│   │       └── oai_metadata_index.json
+│   │   ├── ukdataservice/
+│   │   │   ├── oai_batches/          # auto-downloaded OAI batch_*.xml files
+│   │   │   └── oai_metadata_index.json
+│   │   ├── icpsr/
+│   │   │   └── qualitative_study_ids.json
+│   │   └── crawl.sqlite
 │   └── logs/
+├── scripts/
+│   └── icpsr_collect_ids.py    # standalone script to collect ICPSR qualitative study IDs
+├── docs/
+│   └── crawling-strategy.md
 ├── extensions.csv
 ├── environment.yml
 └── README.md
@@ -40,12 +53,16 @@ playwright install chromium
 ## Usage
 
 ```bash
-# Fresh crawl (deletes old UKDS downloads + DB rows)
+# Fresh crawl (deletes old data for that crawler only)
 python main.py new ukdataservice
+python main.py new icpsr
 
 # Resume incomplete downloads
 python main.py resume ukdataservice
+python main.py resume icpsr
 ```
+
+ICPSR requires login -- you will be prompted for your credentials when the crawler starts.
 
 ## UK Data Service Pipeline
 
@@ -60,7 +77,10 @@ python main.py resume ukdataservice
 6. Check access level and download files for open datasets.
 7. Store metadata in `archive_root/metadata/crawl.sqlite`.
 
-## Notes
+## ICPSR Pipeline
 
-- The crawler does not use query-based website search anymore.
-- OAI batches and `oai_metadata_index.json` are generated locally during crawling if missing.
+1. Load pre-collected qualitative study IDs (filtered via ICPSR search with `dataType=qualitative`).
+2. For each study, fetch metadata via the DCAT JSON API (`/pcms/dcat/{id}`).
+3. Select download format: Qualitative Data > Delimited > ASCII > first available.
+4. Log in and download files.
+5. Store metadata in `archive_root/metadata/crawl.sqlite`.

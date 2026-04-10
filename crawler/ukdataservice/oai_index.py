@@ -6,6 +6,7 @@ dataset metadata. Returns a dict indexed by dataset ID.
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Optional
 import json
 import logging
 import time
@@ -36,7 +37,7 @@ def _sorted_batches(batch_dir: Path) -> list[Path]:
     return sorted(batch_dir.glob("batch_*.xml"), key=_batch_num)
 
 
-def _resolve_batch_dir(batch_dir: Path | None) -> Path:
+def _resolve_batch_dir(batch_dir: Optional[Path]) -> Path:
     if batch_dir is not None:
         return batch_dir
 
@@ -49,7 +50,7 @@ def _resolve_batch_dir(batch_dir: Path | None) -> Path:
     return DEFAULT_BATCH_DIR
 
 
-def _extract_resumption_token(xml_content: bytes) -> str | None:
+def _extract_resumption_token(xml_content: bytes) -> Optional[str]:
     root = ET.fromstring(xml_content)
     token_elem = root.find(".//oai:resumptionToken", NAMESPACES)
     if token_elem is None or token_elem.text is None:
