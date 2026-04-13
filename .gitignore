@@ -34,6 +34,7 @@ venv/
 oai_metadata_index.json
 oai_batches/
 archive_root/logs/
+filter_downloads.py
 
 # Large files (>= 15 MB) in icpsr and ukdataservice — excluded from git
 archive_root/downloads/icpsr/21180/ICPSR_21180-V1.zip

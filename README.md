@@ -33,10 +33,6 @@ Currently supported repositories:
 │   │   └── icpsr/
 │   │       └── qualitative_study_ids.json
 │   └── logs/
-├── scripts/
-│   └── icpsr_collect_ids.py        # standalone script to collect ICPSR qualitative study IDs
-├── docs/
-│   └── crawling-strategy.md
 ├── 23724707-seeding.sqlite
 ├── extensions.csv
 ├── environment.yml
@@ -64,6 +60,13 @@ python main.py resume icpsr
 ```
 
 ICPSR requires login -- you will be prompted for your credentials when the crawler starts.
+
+## Downloaded Files
+
+Only files under 15 MB are included in this repository. The complete dataset (including larger files) is available on Google Drive:
+[https://drive.google.com/drive/folders/1W64tHbJn6DuSTUxm8Jq-X5eB2gjnDsk3?usp=sharing](https://drive.google.com/drive/folders/1W64tHbJn6DuSTUxm8Jq-X5eB2gjnDsk3?usp=sharing)
+
+You can also get all the files by running the crawler from scratch.
 
 ## Access Conditions
 
