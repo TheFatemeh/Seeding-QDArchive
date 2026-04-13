@@ -81,6 +81,8 @@ ICPSR requires login -- you will be prompted for your credentials when the crawl
 
 1. Load pre-collected qualitative study IDs (filtered via ICPSR search with `dataType=qualitative`).
 2. For each study, fetch metadata via the DCAT JSON API (`/pcms/dcat/{id}`).
-3. Select download format: Qualitative Data > Delimited > ASCII > first available.
-4. Log in and download files.
-5. Store metadata in `archive_root/metadata/crawl.sqlite`.
+3. Log in with ICPSR credentials (prompted at runtime).
+4. Select download format by priority: Qualitative Data > Delimited > ASCII > first available.
+5. Download the file (always a zip).
+6. List all files inside the zip and record each in the FILES table — zip is kept on disk, not extracted.
+7. Store metadata in `archive_root/metadata/crawl.sqlite`.

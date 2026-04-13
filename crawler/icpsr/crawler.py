@@ -9,6 +9,7 @@ Flow:
 
 from playwright.sync_api import sync_playwright
 from pathlib import Path
+import zipfile
 import json
 import time
 import re
@@ -194,8 +195,8 @@ class ICPSRCrawler:
         m = re.search(r"\.(v\d+)$", doi, re.IGNORECASE)
         return m.group(1).upper() if m else None
 
-    def _download_file(self, download_url: str, dataset_dir: Path) -> Tuple[str, str, str]:
-        """Download a file. Returns (filename, file_type, status)."""
+    def _download_file(self, download_url: str, dataset_dir: Path) -> Tuple[str, Path, str]:
+        """Download a file. Returns (filename, filepath, status)."""
         try:
             with self.page.expect_download(timeout=60000) as dl_info:
                 self.page.goto(download_url, timeout=30000)
@@ -205,18 +206,27 @@ class ICPSRCrawler:
             filepath = dataset_dir / filename
             download.save_as(filepath)
 
-            file_type = Path(filename).suffix.lstrip(".").lower() if Path(filename).suffix else ""
             logger.info(f"Downloaded: {filename}")
-            return filename, file_type, "SUCCEEDED"
+            return filename, filepath, "SUCCEEDED"
 
         except Exception as e:
-            # Check if we got redirected to login page
             if "login.icpsr" in self.page.url:
                 logger.warning(f"Login required for download: {download_url}")
-                return "", "", "FAILED_LOGIN_REQUIRED"
+                return "", Path(), "FAILED_LOGIN_REQUIRED"
             else:
                 logger.warning(f"Download failed: {e}")
-                return "", "", "FAILED_SERVER_UNRESPONSIVE"
+                return "", Path(), "FAILED_SERVER_UNRESPONSIVE"
+
+    def _insert_files_from_zip(self, project_id: int, zip_path: Path):
+        """List files inside a zip and insert each as a FILES row."""
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                for entry in zf.infolist():
+                    if not entry.is_dir():
+                        file_type = Path(entry.filename).suffix.lstrip(".").lower()
+                        self.db.insert_file(project_id, entry.filename, file_type, "SUCCEEDED")
+        except zipfile.BadZipFile:
+            logger.warning(f"Not a valid zip file: {zip_path}")
 
     def _accept_terms_if_needed(self):
         """Click 'I Agree' on terms page if it appears."""
@@ -311,14 +321,22 @@ class ICPSRCrawler:
                     time.sleep(2)
                     self._accept_terms_if_needed()
 
-                    filename, file_type, status = self._download_file(
+                    filename, filepath, status = self._download_file(
                         dist["downloadURL"], dataset_dir
                     )
-                    self.db.insert_file(project_id, filename, file_type, status)
 
-                    if status == "SUCCEEDED":
+                    if status == "SUCCEEDED" and filepath.suffix.lower() == ".zip":
+                        # Insert the zip file itself
+                        self.db.insert_file(project_id, filename, "zip", "SUCCEEDED")
+                        # Also list files inside zip, insert each as a row
+                        self._insert_files_from_zip(project_id, filepath)
+                        tqdm.write(f"  ✓ [{dist.get('format', '?')}] {filename}")
+                    elif status == "SUCCEEDED":
+                        file_type = filepath.suffix.lstrip(".").lower()
+                        self.db.insert_file(project_id, filename, file_type, status)
                         tqdm.write(f"  ✓ [{dist.get('format', '?')}] {filename}")
                     else:
+                        self.db.insert_file(project_id, "", "", status)
                         tqdm.write(f"  ✗ [{status}] {dcat.get('title', study_id)[:60]}")
                 else:
                     # No distribution links at all
@@ -379,14 +397,20 @@ class ICPSRCrawler:
                     time.sleep(2)
                     self._accept_terms_if_needed()
 
-                    filename, file_type, status = self._download_file(
+                    filename, filepath, status = self._download_file(
                         dist["downloadURL"], dataset_dir
                     )
-                    self.db.insert_file(project_id, filename, file_type, status)
 
-                    if status == "SUCCEEDED":
+                    if status == "SUCCEEDED" and filepath.suffix.lower() == ".zip":
+                        self.db.insert_file(project_id, filename, "zip", "SUCCEEDED")
+                        self._insert_files_from_zip(project_id, filepath)
+                        logger.info(f"[{index}/{len(to_retry)}] Downloaded: {filename}")
+                    elif status == "SUCCEEDED":
+                        file_type = filepath.suffix.lstrip(".").lower()
+                        self.db.insert_file(project_id, filename, file_type, status)
                         logger.info(f"[{index}/{len(to_retry)}] Downloaded: {filename}")
                     else:
+                        self.db.insert_file(project_id, "", "", status)
                         logger.info(f"[{index}/{len(to_retry)}] {status}")
 
             except Exception as e:
