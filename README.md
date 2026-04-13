@@ -31,7 +31,7 @@ Currently supported repositories:
 │   │   │   └── oai_metadata_index.json
 │   │   ├── icpsr/
 │   │   │   └── qualitative_study_ids.json
-│   │   └── crawl.sqlite
+├── 23724707-seeding.sqlite
 │   └── logs/
 ├── scripts/
 │   └── icpsr_collect_ids.py    # standalone script to collect ICPSR qualitative study IDs
@@ -75,7 +75,7 @@ ICPSR requires login -- you will be prompted for your credentials when the crawl
 	- include when no type is present
 5. For each included dataset ID, visit the dataset page directly.
 6. Check access level and download files for open datasets.
-7. Store metadata in `archive_root/metadata/crawl.sqlite`.
+7. Store metadata in `23724707-seeding.sqlite`.
 
 ## ICPSR Pipeline
 
@@ -85,4 +85,4 @@ ICPSR requires login -- you will be prompted for your credentials when the crawl
 4. Select download format by priority: Qualitative Data > Delimited > ASCII > first available.
 5. Download the file (always a zip).
 6. List all files inside the zip and record each in the FILES table — zip is kept on disk, not extracted.
-7. Store metadata in `archive_root/metadata/crawl.sqlite`.
+7. Store metadata in `23724707-seeding.sqlite`.

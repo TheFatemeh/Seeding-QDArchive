@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 class Database:
-    def __init__(self, db_path: str = "archive_root/metadata/crawl.sqlite"):
+    def __init__(self, db_path: str = "23724707-seeding.sqlite"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.db_path)
