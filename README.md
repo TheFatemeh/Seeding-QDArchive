@@ -33,7 +33,7 @@ Currently supported repositories:
 │   │   └── icpsr/
 │   │       └── qualitative_study_ids.json
 │   └── logs/
-├── 23724707-seeding.sqlite
+├── 23724707-sq26.db
 ├── extensions.csv
 ├── environment.yml
 └── README.md
@@ -82,7 +82,7 @@ See [crawler/workflow.md](crawler/workflow.md) for details on which access level
 	- include mixed types (e.g., `Numeric` + `Text`)
 5. For each included dataset ID, visit the dataset page directly.
 6. Check access level and download files for open datasets.
-7. Store metadata in `23724707-seeding.sqlite`.
+7. Store metadata in `23724707-sq26.db`.
 
 ## ICPSR Pipeline
 
@@ -91,4 +91,4 @@ See [crawler/workflow.md](crawler/workflow.md) for details on which access level
 3. Log in with ICPSR credentials (prompted at runtime).
 4. Download the file (always a zip).
 5. List all files inside the zip and record each in the FILES table — zip is kept on disk, not extracted.
-6. Store metadata in `23724707-seeding.sqlite`.
+6. Store metadata in `23724707-sq26.db`.
